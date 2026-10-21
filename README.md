@@ -9,7 +9,7 @@ ESRI LOD thresholds and texture compression, driven by one PowerShell entry poin
 | `ankara-pipeline.json` | Settings read by the pipeline (paths, stages, per-filter cutoffs, compression preset). Relative paths resolve against the script folder. |
 | `slim_trees.py` | Surgical GLB edit: drop all-white `COLOR_0`, drop unreferenced `TEXCOORD_1`, LOD0 billboard `BLEND`→`MASK`. Preserves `MSFT_lod` and extras. Dry-run by default. |
 | `check_cutoffs.py` | Verify gate: LOD3/2/1 crown/reproductive materials must be `MASK` at the expected cutoff for their filename filter. Exits 1 on mismatch. |
-| `glb_viewer.html` | Browser viewer: drop .glb (or .gltf + .bin + textures). Shows GLB byte layout, buffer views, materials/alpha, and walks the `MSFT_lod` chain with live `ESRI_lod` switching by screen radius. Packs .gltf → .glb. Hosted via GitHub Pages (`.github/workflows/pages.yml`). |
+| `glb_viewer.html` | Browser viewer with a choice of engine: three.js, Babylon.js or the ArcGIS Maps SDK for JavaScript. Drop .glb (or .gltf + .bin + textures). Shows GLB byte layout, buffer views, materials/alpha, and the `MSFT_lod` chain with live `ESRI_lod` switching (ArcGIS switches natively; a row of 8 shows several levels at once). Packs .gltf → .glb. Hosted via GitHub Pages (`.github/workflows/pages.yml`). |
 | `add-esri-lod.py` | Writes `extras.ESRI_lod` screen-space thresholds onto the top `MSFT_lod` node so ArcGIS switches LODs. Standalone (not called by the pipeline). |
 
 ## Usage
