@@ -1,0 +1,55 @@
+{
+  "mode": "compress",
+  "paths": {
+    "src": "C:\\Users\\mar11366\\Desktop\\Projects\\TestPacker\\New LOD Test 19",
+    "glb": "C:\\Users\\mar11366\\Desktop\\Compressor\\files\\uncompressed",
+    "stage": "C:\\AnkaraKtx2",
+    "thresholdsJson": "lod_thresholds_v2.json",
+    "packScript": "Pack-Tree.ps1",
+    "gltfTool": "build-scripts\\gltf-tool.py",
+    "alphaScript": "set_alpha_cutoff.py",
+    "basisu": "C:\\Tools\\basisu\\basisu.exe",
+    "ktx": "ktx",
+    "glbCompressed": "C:\\Users\\mar11366\\Desktop\\Compressor\\files\\etc1s 255 esri"
+  },
+  "defaultThresholds": "128,62,25,2",
+  "groundSkip": [
+    "Philodendron_Selloum"
+  ],
+  "stages": {
+    "reorder": true,
+    "ground": true,
+    "slim": true,
+    "cutoffs": true,
+    "verify": true,
+    "qaCopy": false
+  },
+  "cutoffs": [
+    {
+      "filter": "Autumn_Adult",
+      "cutoff": 0.05
+    },
+    {
+      "filter": "Autumn_Young",
+      "cutoff": 0.05
+    },
+    {
+      "filter": "Spring_Adult",
+      "cutoff": 0.1
+    },
+    {
+      "filter": "Spring_Young",
+      "cutoff": 0.1
+    }
+  ],
+  "compression": {
+    "enabled": true,
+    "preset": "esri",
+    "codec": "etc1s",
+    "quality": 255,
+    "maxDim": 0,
+    "keepFallback": false,
+    "solidify": false,
+    "minDim": 0
+  }
+}
