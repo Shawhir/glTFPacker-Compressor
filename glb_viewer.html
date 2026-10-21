@@ -144,13 +144,24 @@ import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { DRACOLoader } from 'three/addons/loaders/DRACOLoader.js';
 import { KTX2Loader } from 'three/addons/loaders/KTX2Loader.js';
 import { MeshoptDecoder } from 'three/addons/libs/meshopt_decoder.module.js';
-import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 
 const THREE_LIBS = 'https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/libs/';
 const BABYLON_JS = ['https://cdn.jsdelivr.net/npm/babylonjs@7.40.0/babylon.js',
                     'https://cdn.jsdelivr.net/npm/babylonjs-loaders@7.40.0/babylonjs.loaders.min.js'];
-const ARCGIS = 'https://cdn.jsdelivr.net/npm/@arcgis/core@4.32.0/';
+const ARCGIS_AMD = 'https://js.arcgis.com/4.32/';                      // Esri's bundled build: fast
+const ARCGIS = 'https://cdn.jsdelivr.net/npm/@arcgis/core@4.32.0/';    // unbundled ESM fallback: slow, but allowed everywhere
 const SITE = { longitude: 32.8597, latitude: 39.9334 };   // Ankara
+
+// One sun for every engine. ArcGIS takes it as a date over SITE; this date puts the sun at
+// azimuth ~259° (WSW), elevation ~50° there, which three.js and Babylon.js reproduce as a direction.
+const SUN = { azimuth: 259, elevation: 50, date: '2024-06-21T12:44:00Z' };
+const LIGHT = { sky: 0.45, sun: 0.75, skyColor: '#dde6f0', groundColor: '#80806f', sunColor: '#fff4e5' };
+const GROUND = [214, 218, 208];
+// Direction towards the sun in glTF axes: +Y up, +X east, -Z north.
+const SUN_DIR = (() => {
+  const a = THREE.MathUtils.degToRad(SUN.azimuth), e = THREE.MathUtils.degToRad(SUN.elevation);
+  return new THREE.Vector3(Math.sin(a) * Math.cos(e), Math.sin(e), -Math.cos(a) * Math.cos(e));
+})();
 
 const $ = s => document.querySelector(s);
 const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
@@ -442,9 +453,18 @@ async function loadIntoEngine() {
 function threeEngine(box) {
   const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
   renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+  renderer.shadowMap.enabled = true; renderer.shadowMap.type = THREE.PCFSoftShadowMap;
   box.append(renderer.domElement);
   const scene = new THREE.Scene();
-  scene.environment = new THREE.PMREMGenerator(renderer).fromScene(new RoomEnvironment(), 0.04).texture;
+  // three's Lambert divides every light by π, hence the π on both.
+  scene.add(new THREE.HemisphereLight(LIGHT.skyColor, LIGHT.groundColor, LIGHT.sky * Math.PI));
+  const sun = new THREE.DirectionalLight(LIGHT.sunColor, LIGHT.sun * Math.PI);
+  sun.castShadow = true; sun.shadow.mapSize.set(2048, 2048);
+  scene.add(sun, sun.target);
+  const ground = new THREE.Mesh(new THREE.PlaneGeometry(1, 1).rotateX(-Math.PI / 2),
+    new THREE.MeshStandardMaterial({ color: new THREE.Color(...GROUND.map(v => v / 255)), roughness: 1 }));
+  ground.receiveShadow = true;
+  scene.add(ground);
   const camera = new THREE.PerspectiveCamera(45, 1, 0.01, 10000);
   const controls = new OrbitControls(camera, renderer.domElement);
   controls.enableDamping = true;
@@ -477,8 +497,17 @@ function threeEngine(box) {
       const gltf = await loader.loadAsync(cur.explodedUrl);
       clear(); root = gltf.scene; scene.add(root);
       levels = [];
-      root.traverse(o => { if (o.userData?.__lod != null) levels[o.userData.__lod] = o; });
-      sphere = new THREE.Box3().setFromObject(levels[0] || root).getBoundingSphere(new THREE.Sphere());
+      root.traverse(o => {
+        if (o.userData?.__lod != null) levels[o.userData.__lod] = o;
+        if (o.isMesh) o.castShadow = o.receiveShadow = true;
+      });
+      const b = new THREE.Box3().setFromObject(levels[0] || root), r = (sphere = b.getBoundingSphere(new THREE.Sphere())).radius;
+      ground.position.y = b.min.y; ground.scale.setScalar(r * 60);
+      grid.position.y = b.min.y + r * 0.002; grid.scale.setScalar(Math.max(r / 5, 0.1));
+      sun.position.copy(sphere.center).addScaledVector(SUN_DIR, r * 4); sun.target.position.copy(sphere.center);
+      Object.assign(sun.shadow.camera, { left: -r * 2.5, right: r * 2.5, top: r * 2.5, bottom: -r * 2.5, near: r * 0.5, far: r * 8 });
+      sun.shadow.camera.updateProjectionMatrix();
+      sun.shadow.bias = -0.0005; sun.shadow.normalBias = r * 0.01;
     },
     frame() {
       const { center, radius } = sphere;
@@ -486,8 +515,6 @@ function threeEngine(box) {
       camera.position.copy(center).add(new THREE.Vector3(0.6, 0.35, 1).normalize().multiplyScalar(d));
       camera.near = Math.max(radius / 1000, 0.001); camera.far = d * 100; camera.updateProjectionMatrix();
       controls.target.copy(center); controls.update();
-      grid.position.y = new THREE.Box3().setFromObject(levels[0] || root).min.y;
-      grid.scale.setScalar(Math.max(radius / 5, 0.1));
     },
     setLevel(a) { levels.forEach((o, i) => o.visible = i === a); },
     // Same metric ArcGIS uses for ESRI_lod: bounding-sphere radius projected to pixels.
@@ -511,16 +538,32 @@ const loadScript = src => new Promise((res, rej) => {
 });
 
 async function babylonEngine(box) {
-  for (const src of BABYLON_JS) await loadScript(src);
+  // Hide an AMD loader (ArcGIS's) while the UMD bundles load, or they register as AMD modules instead of window.BABYLON.
+  const amd = window.define; window.define = undefined;
+  try { for (const src of BABYLON_JS) await loadScript(src); } finally { if (amd) window.define = amd; }
   const B = window.BABYLON;
   const canvas = document.createElement('canvas'); box.append(canvas);
   const eng = new B.Engine(canvas, true, { stencil: true }, true);
   const scene = new B.Scene(eng);
   scene.clearColor = new B.Color4(0, 0, 0, 0);
-  const cam = new B.ArcRotateCamera('cam', -Math.PI / 2.5, Math.PI / 2.6, 10, B.Vector3.Zero(), scene);
+  // Same viewpoint as three.js: from the south-east, ~17° up. glTF (x, y, z) lands in Babylon as (-x, y, z).
+  const VIEW_ALPHA = Math.PI / 2 + Math.atan(0.6), VIEW_BETA = Math.PI / 2 - Math.asin(0.35 / Math.hypot(0.6, 0.35, 1));
+  const cam = new B.ArcRotateCamera('cam', VIEW_ALPHA, VIEW_BETA, 10, B.Vector3.Zero(), scene);
   cam.attachControl(canvas, true); cam.wheelDeltaPercentage = 0.01; cam.minZ = 0.01; cam.fov = THREE.MathUtils.degToRad(45);
-  new B.HemisphericLight('sky', new B.Vector3(0, 1, 0), scene).intensity = 0.9;
-  new B.DirectionalLight('sun', new B.Vector3(-1, -2, -1), scene).intensity = 2;
+  const sky = new B.HemisphericLight('sky', new B.Vector3(0, 1, 0), scene);
+  sky.intensity = LIGHT.sky; sky.diffuse = B.Color3.FromHexString(LIGHT.skyColor); sky.groundColor = B.Color3.FromHexString(LIGHT.groundColor);
+  sky.specular = B.Color3.Black();
+  const toSun = new B.Vector3(-SUN_DIR.x, SUN_DIR.y, SUN_DIR.z);
+  const sun = new B.DirectionalLight('sun', toSun.scale(-1), scene);
+  sun.intensity = LIGHT.sun * Math.PI;   // Babylon PBR divides punctual lights by π (hemispheric light: no), matching three's
+  sun.diffuse = B.Color3.FromHexString(LIGHT.sunColor);
+  const shadows = new B.ShadowGenerator(2048, sun);
+  shadows.usePoissonSampling = true;   // PCF rendered no shadow on some WebGL2 drivers; Poisson works everywhere
+  shadows.bias = 0.001; shadows.normalBias = 0.01;
+  const ground = B.MeshBuilder.CreateGround('ground', { width: 1, height: 1 }, scene);
+  const gm = new B.PBRMaterial('groundMat', scene);   // PBR like the glTF materials, so it lights the same as in three.js
+  gm.albedoColor = B.Color3.FromInts(...GROUND).toLinearSpace(); gm.metallic = 0; gm.roughness = 1;
+  ground.material = gm; ground.receiveShadows = true;
   const ro = new ResizeObserver(() => eng.resize()); ro.observe(box);
   eng.runRenderLoop(() => scene.render());
 
@@ -538,9 +581,16 @@ async function babylonEngine(box) {
       const top = levels[0] || res.meshes[0];
       const { min, max } = top.getHierarchyBoundingVectors(true);
       center = min.add(max).scale(0.5); radius = Math.max(max.subtract(min).length() / 2, 1e-3);
+      const casters = res.meshes.filter(m => m.getTotalVertices() > 0);
+      casters.forEach(m => m.receiveShadows = true);
+      shadows.getShadowMap().renderList = casters;
+      ground.position.y = min.y; ground.scaling.setAll(radius * 60);
+      // depth range must reach the ground, not just the casters (auto bounds stop at the model)
+      sun.position = center.add(toSun.scale(radius * 4)); sun.shadowMinZ = radius * 0.5; sun.shadowMaxZ = radius * 8;
     },
     frame() {
-      cam.setTarget(center.clone());
+      cam.setTarget(center.clone());   // recomputes alpha/beta from the old position, so set them after
+      cam.alpha = VIEW_ALPHA; cam.beta = VIEW_BETA;
       cam.radius = radius / Math.sin(cam.fov / 2) * 1.1;
       cam.minZ = radius / 1000; cam.maxZ = cam.radius * 100;
     },
@@ -558,9 +608,8 @@ async function babylonEngine(box) {
 }
 
 // The ArcGIS widget theme, inlined so the page needs no external stylesheet.
-async function arcgisCss() {
+async function arcgisCss(base) {
   if (document.getElementById('arcgis-css')) return;
-  const base = ARCGIS + 'assets/esri/themes/light/';
   try {
     const css = (await (await fetch(base + 'main.css')).text())
       .replace(/url\((['"]?)(?!data:|https?:|blob:)/g, `url($1${base}`);
@@ -568,20 +617,45 @@ async function arcgisCss() {
   } catch (e) { console.warn('ArcGIS CSS not loaded', e); }
 }
 
+const ARCGIS_MODULES = ['config', 'Map', 'views/SceneView', 'Graphic', 'layers/GraphicsLayer'];
+let arcgisSdk = null;
+// Esri's bundled AMD build loads in a few requests. Where js.arcgis.com is blocked, fall back to
+// @arcgis/core from jsDelivr, which works anywhere but fetches thousands of separate modules.
+function loadArcgis() {
+  return arcgisSdk ||= (async () => {
+    try {
+      await loadScript(ARCGIS_AMD);
+      const mods = await new Promise((res, rej) => {
+        const t = setTimeout(() => rej(new Error('timeout')), 30000);
+        window.require(ARCGIS_MODULES.map(m => 'esri/' + m), (...m) => { clearTimeout(t); res(m); });
+      });
+      await arcgisCss(ARCGIS_AMD + 'esri/themes/light/');
+      return mods;
+    } catch (e) {
+      console.warn('js.arcgis.com unavailable, using jsDelivr @arcgis/core', e);
+      const mods = (await Promise.all(ARCGIS_MODULES.map(p => import(ARCGIS + p + '.js')))).map(m => m.default);
+      mods[0].assetsPath = ARCGIS + 'assets';
+      await arcgisCss(ARCGIS + 'assets/esri/themes/light/');
+      return mods;
+    }
+  })().catch(e => { arcgisSdk = null; throw e; });
+}
+
 async function arcgisEngine(box) {
-  const [esriConfig, EsriMap, SceneView, Graphic, GraphicsLayer] = (await Promise.all(
-    ['config.js', 'Map.js', 'views/SceneView.js', 'Graphic.js', 'layers/GraphicsLayer.js'].map(p => import(ARCGIS + p)))).map(m => m.default);
-  esriConfig.assetsPath = ARCGIS + 'assets';
-  await arcgisCss();
+  const [, EsriMap, SceneView, Graphic, GraphicsLayer] = await loadArcgis();
   const div = Object.assign(document.createElement('div'), { style: 'position:absolute;inset:0' });
   box.append(div);
   const layer = new GraphicsLayer({ elevationInfo: { mode: 'relative-to-ground' } });
   const map = new EsriMap({ layers: [layer] });
-  map.ground.surfaceColor = [214, 218, 208];
+  map.ground.surfaceColor = GROUND;
   const sv = new SceneView({
     container: div, map, qualityProfile: 'high',
-    environment: { background: { type: 'color', color: [233, 235, 239, 1] }, starsEnabled: false, atmosphereEnabled: false },
-    ui: { components: [] },   // widgets would pull in Calcite, which the CDN path can't resolve
+    environment: {
+      background: { type: 'color', color: [233, 235, 239, 1] }, starsEnabled: false, atmosphereEnabled: false,
+      // cameraTrackingEnabled would re-time the sun to the camera's longitude, moving it off SUN
+      lighting: { type: 'sun', date: new Date(SUN.date), directShadowsEnabled: true, cameraTrackingEnabled: false },
+    },
+    ui: { components: [] },   // no widgets: they would pull in Calcite, which the jsDelivr path can't resolve
   });
   await sv.when();
 
@@ -606,7 +680,8 @@ async function arcgisEngine(box) {
     async load(c) { cur = c; build(); await sv.whenLayerView(layer); },
     frame() {
       const first = layer.graphics.getItemAt(0);
-      if (first) sv.goTo({ target: first, heading: 0, tilt: 75 }, { animate: false }).catch(() => {});
+      sv.environment.lighting.date = new Date(SUN.date);
+      if (first) sv.goTo({ target: first, heading: 329, tilt: 73 }, { animate: false }).catch(() => {});   // same south-east viewpoint as the others
     },
     setForced(m) { if (m !== forced) { forced = m; build(); } },
     toggle(k, on) { if (k === 'row') { row = on; build(); this.frame(); } },
@@ -631,6 +706,7 @@ async function useEngine(name) {
   document.querySelectorAll('#engines button').forEach(b => b.classList.toggle('on', b.dataset.engine === name));
   try { engine?.dispose(); } catch (e) { console.warn(e); }
   engine = null; view.innerHTML = '';
+  $('#busy').textContent = name === 'arcgis' ? 'Loading ArcGIS Maps SDK…' : 'Loading…';
   $('#busy').style.display = 'flex';
   try { engine = await ENGINES[name](view); }
   catch (e) { console.error(e); showErr(`Could not start ${name}: ${e.message || e}`); $('#hud').style.display = 'none'; }
@@ -639,6 +715,7 @@ async function useEngine(name) {
   await loadIntoEngine();
 }
 document.querySelectorAll('#engines button').forEach(b => b.onclick = () => b.dataset.engine !== engineName && useEngine(b.dataset.engine));
+$('#engines [data-engine=arcgis]').addEventListener('pointerenter', () => loadArcgis().catch(() => {}), { once: true });
 
 // ---- controls + HUD ------------------------------------------------------------
 function setupControls() {
