@@ -1,0 +1,517 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>GLB Viewer</title>
+<style>
+:root{
+  --bg:#f4f5f7; --panel:#ffffff; --text:#1d2330; --muted:#677084; --line:#dde1e8;
+  --accent:#2f6fde; --ok:#1f8a4c; --warn:#b26b00; --bad:#c23b3b;
+  --c-json:#8a63d2; --c-geo:#2f6fde; --c-idx:#5fa8e8; --c-tex:#e08a2e; --c-other:#9aa3b2; --c-hdr:#c9ced8;
+  --view:#e9ebef;
+}
+@media (prefers-color-scheme: dark){ :root:not([data-theme="light"]){
+  --bg:#14171c; --panel:#1b1f26; --text:#e4e7ec; --muted:#8d95a5; --line:#2b313b;
+  --accent:#6a9cf5; --ok:#4cc27e; --warn:#e3a33b; --bad:#ef6b6b; --c-hdr:#3a414d; --view:#20242c;
+}}
+:root[data-theme="dark"]{
+  --bg:#14171c; --panel:#1b1f26; --text:#e4e7ec; --muted:#8d95a5; --line:#2b313b;
+  --accent:#6a9cf5; --ok:#4cc27e; --warn:#e3a33b; --bad:#ef6b6b; --c-hdr:#3a414d; --view:#20242c;
+}
+*{box-sizing:border-box}
+html,body{margin:0;height:100%}
+body{background:var(--bg);color:var(--text);font:13px/1.45 system-ui,-apple-system,"Segoe UI",sans-serif;
+  display:grid;grid-template-columns:360px 1fr;height:100vh;overflow:hidden}
+aside{background:var(--panel);border-right:1px solid var(--line);display:flex;flex-direction:column;min-height:0}
+header{padding:12px 16px;border-bottom:1px solid var(--line);display:flex;gap:8px;align-items:center}
+header h1{font-size:15px;margin:0;flex:1}
+button,select{font:inherit;color:var(--text);background:var(--bg);border:1px solid var(--line);border-radius:6px;padding:4px 10px;cursor:pointer}
+button:hover{border-color:var(--accent)}
+button.primary{background:var(--accent);border-color:var(--accent);color:#fff}
+#files{max-height:22vh;overflow:auto;border-bottom:1px solid var(--line)}
+#files div{padding:5px 16px;cursor:pointer;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#files div:hover{background:var(--bg)}
+#files div.sel{background:var(--accent);color:#fff}
+#files .hint{color:var(--muted);cursor:default}
+nav{display:flex;border-bottom:1px solid var(--line)}
+nav button{flex:1;border:0;border-radius:0;background:none;padding:8px 0;color:var(--muted);border-bottom:2px solid transparent}
+nav button.on{color:var(--text);border-bottom-color:var(--accent)}
+#info{flex:1;overflow:auto;padding:12px 16px}
+#info h3{font-size:12px;text-transform:uppercase;letter-spacing:.04em;color:var(--muted);margin:14px 0 6px}
+#info h3:first-child{margin-top:0}
+table{border-collapse:collapse;width:100%;font-size:12px}
+td,th{text-align:left;padding:3px 4px;border-bottom:1px solid var(--line);vertical-align:top}
+th{color:var(--muted);font-weight:500}
+td.n{text-align:right;font-variant-numeric:tabular-nums}
+.tag{display:inline-block;padding:0 6px;border-radius:9px;font-size:11px;border:1px solid var(--line)}
+.ok{color:var(--ok)} .warn{color:var(--warn)} .bad{color:var(--bad)} .muted{color:var(--muted)}
+.bar{display:flex;height:16px;border-radius:4px;overflow:hidden;margin:6px 0}
+.bar span{display:block;height:100%}
+.legend{display:grid;grid-template-columns:12px 1fr auto;gap:2px 6px;align-items:center;font-size:12px}
+.legend i{width:10px;height:10px;border-radius:2px;display:block}
+pre{font:11px/1.4 ui-monospace,Consolas,monospace;background:var(--bg);padding:8px;border-radius:6px;overflow:auto;max-height:50vh;white-space:pre-wrap;word-break:break-all}
+main{position:relative;background:var(--view);min-width:0}
+canvas{display:block;width:100%;height:100%}
+#drop{position:absolute;inset:16px;border:2px dashed var(--line);border-radius:12px;display:flex;align-items:center;justify-content:center;
+  text-align:center;color:var(--muted);pointer-events:none;font-size:14px}
+#drop.hide{display:none}
+body.dragging #drop{display:flex;border-color:var(--accent);color:var(--accent);background:color-mix(in srgb,var(--view) 85%,var(--accent))}
+#hud{position:absolute;left:12px;top:12px;background:color-mix(in srgb,var(--panel) 88%,transparent);border:1px solid var(--line);
+  border-radius:8px;padding:8px 10px;font-variant-numeric:tabular-nums;min-width:220px;display:none}
+#hud .big{font-size:15px;font-weight:600}
+#ctrl{position:absolute;left:12px;right:12px;bottom:12px;display:none;gap:8px;flex-wrap:wrap;align-items:center;
+  background:color-mix(in srgb,var(--panel) 88%,transparent);border:1px solid var(--line);border-radius:8px;padding:8px 10px}
+#ctrl label{display:flex;gap:4px;align-items:center}
+#ladder{display:flex;gap:4px;flex-wrap:wrap}
+#ladder span{padding:2px 8px;border-radius:9px;border:1px solid var(--line);font-size:12px}
+#ladder span.on{background:var(--accent);border-color:var(--accent);color:#fff}
+#err{position:absolute;right:12px;top:12px;max-width:50%;background:var(--panel);border:1px solid var(--bad);color:var(--bad);border-radius:8px;padding:8px 10px;display:none}
+@media (max-width:760px){
+  body{grid-template-columns:1fr;grid-template-rows:55vh 1fr;overflow:auto;height:auto;min-height:100vh}
+  main{grid-row:1;min-height:55vh} aside{grid-row:2;border-right:0}
+  #info{padding:12px 16px}
+}
+</style>
+<script type="importmap">
+{"imports":{
+  "three":"https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+  "three/addons/":"https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+}}
+</script>
+</head>
+<body>
+<aside>
+  <header>
+    <h1>GLB Viewer</h1>
+    <button id="open" class="primary">Open…</button>
+    <button id="theme" title="Toggle theme">◐</button>
+    <input id="pick" type="file" multiple accept=".glb,.gltf,.bin,.png,.jpg,.jpeg,.ktx2,.webp" hidden>
+  </header>
+  <div id="files"><div class="hint">Drop .glb files, or a .gltf with its .bin and textures.</div></div>
+  <nav>
+    <button data-tab="structure" class="on">Structure</button>
+    <button data-tab="lod">LOD</button>
+    <button data-tab="materials">Materials</button>
+    <button data-tab="meshes">Meshes</button>
+    <button data-tab="json">JSON</button>
+  </nav>
+  <div id="info"><p class="muted">Nothing loaded.</p></div>
+</aside>
+<main>
+  <div id="drop">Drop .glb / .gltf (+ .bin, textures) here</div>
+  <div id="hud"></div>
+  <div id="err"></div>
+  <div id="ctrl">
+    <label>LOD <select id="lodSel"><option value="auto">Auto (ESRI_lod)</option></select></label>
+    <div id="ladder"></div>
+    <span style="flex:1"></span>
+    <label><input type="checkbox" id="wire"> Wireframe</label>
+    <label><input type="checkbox" id="grid" checked> Grid</label>
+    <label><input type="checkbox" id="spin"> Spin</label>
+    <button id="frame">Frame</button>
+  </div>
+</main>
+
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { DRACOLoader } from 'three/addons/loaders/DRACOLoader.js';
+import { KTX2Loader } from 'three/addons/loaders/KTX2Loader.js';
+import { MeshoptDecoder } from 'three/addons/libs/meshopt_decoder.module.js';
+import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
+
+const CDN = 'https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/libs/';
+const $ = s => document.querySelector(s);
+const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const kb = n => n >= 1048576 ? (n/1048576).toFixed(2)+' MB' : n >= 1024 ? (n/1024).toFixed(1)+' KB' : n+' B';
+const GLB_MAGIC = 0x46546C67, CHUNK_JSON = 0x4E4F534A, CHUNK_BIN = 0x004E4942;
+
+// ---- theme ---------------------------------------------------------------
+try { const t = localStorage.getItem('glbv-theme'); if (t) document.documentElement.dataset.theme = t; } catch {}
+$('#theme').onclick = () => {
+  const dark = document.documentElement.dataset.theme
+    ? document.documentElement.dataset.theme === 'dark'
+    : matchMedia('(prefers-color-scheme: dark)').matches;
+  const t = dark ? 'light' : 'dark';
+  document.documentElement.dataset.theme = t;
+  try { localStorage.setItem('glbv-theme', t); } catch {}
+};
+
+// ---- three setup -----------------------------------------------------------
+const main = $('main');
+const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+main.prepend(renderer.domElement);
+const scene = new THREE.Scene();
+scene.environment = new THREE.PMREMGenerator(renderer).fromScene(new RoomEnvironment(), 0.04).texture;
+const camera = new THREE.PerspectiveCamera(45, 1, 0.01, 10000);
+camera.position.set(4, 3, 6);
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.enableDamping = true;
+const grid = new THREE.GridHelper(20, 20, 0x888888, 0x888888);
+grid.material.opacity = 0.25; grid.material.transparent = true;
+scene.add(grid);
+
+const draco = new DRACOLoader().setDecoderPath(CDN + 'draco/gltf/');
+const ktx2 = new KTX2Loader().setTranscoderPath(CDN + 'basis/').detectSupport(renderer);
+
+function resize() {
+  const w = main.clientWidth, h = main.clientHeight;
+  renderer.setSize(w, h, false); camera.aspect = w / h; camera.updateProjectionMatrix();
+}
+new ResizeObserver(resize).observe(main); resize();
+
+// ---- state -----------------------------------------------------------------
+const files = new Map();      // basename -> File/Blob
+const urls = new Map();       // basename -> blob URL
+let current = null;           // { name, info, gltf, root, levels, thresholds, sphere }
+let tab = 'structure';
+
+const manager = new THREE.LoadingManager();
+manager.setURLModifier(u => urls.get(decodeURIComponent(u.split(/[\\/]/).pop().split(/[?#]/)[0])) || u);
+const loader = new GLTFLoader(manager).setDRACOLoader(draco).setKTX2Loader(ktx2).setMeshoptDecoder(MeshoptDecoder);
+
+// ---- file intake -----------------------------------------------------------
+$('#open').onclick = () => $('#pick').click();
+$('#pick').onchange = e => addFiles(e.target.files);
+addEventListener('dragover', e => { e.preventDefault(); document.body.classList.add('dragging'); });
+addEventListener('dragleave', e => { if (!e.relatedTarget) document.body.classList.remove('dragging'); });
+addEventListener('drop', async e => {
+  e.preventDefault(); document.body.classList.remove('dragging');
+  const out = [];
+  const walk = async entry => {
+    if (entry.isFile) out.push(await new Promise(r => entry.file(r)));
+    else if (entry.isDirectory) {
+      const rd = entry.createReader();
+      for (let batch; (batch = await new Promise(r => rd.readEntries(r))).length;) for (const c of batch) await walk(c);
+    }
+  };
+  const items = [...e.dataTransfer.items].map(i => i.webkitGetAsEntry?.()).filter(Boolean);
+  if (items.length) { for (const it of items) await walk(it); addFiles(out); }
+  else addFiles(e.dataTransfer.files);
+});
+
+function addFiles(list) {
+  for (const f of list) {
+    if (urls.has(f.name)) URL.revokeObjectURL(urls.get(f.name));
+    files.set(f.name, f); urls.set(f.name, URL.createObjectURL(f));
+  }
+  renderFileList();
+  const first = [...files.keys()].find(n => /\.(glb|gltf)$/i.test(n));
+  if (first && !current) open(first);
+}
+
+function renderFileList() {
+  const models = [...files.keys()].filter(n => /\.(glb|gltf)$/i.test(n)).sort();
+  $('#files').innerHTML = models.length
+    ? models.map(n => `<div data-n="${esc(n)}" class="${current?.name === n ? 'sel' : ''}">${esc(n)}</div>`).join('')
+    : '<div class="hint">No .glb / .gltf among the dropped files.</div>';
+  $('#files').querySelectorAll('[data-n]').forEach(d => d.onclick = () => open(d.dataset.n));
+}
+
+// ---- GLB / glTF parsing ----------------------------------------------------
+function parseGlb(ab) {
+  const dv = new DataView(ab);
+  if (ab.byteLength < 12 || dv.getUint32(0, true) !== GLB_MAGIC) return null;
+  const version = dv.getUint32(4, true), length = dv.getUint32(8, true);
+  const chunks = []; let json = null, off = 12;
+  while (off + 8 <= Math.min(length, ab.byteLength)) {
+    const len = dv.getUint32(off, true), type = dv.getUint32(off + 4, true);
+    chunks.push({ type, len, offset: off });
+    if (type === CHUNK_JSON) json = JSON.parse(new TextDecoder().decode(new Uint8Array(ab, off + 8, len)));
+    off += 8 + len;
+  }
+  return { version, length, fileSize: ab.byteLength, chunks, json };
+}
+
+// What each bufferView holds: textures, index data, vertex attributes, or other.
+function classifyViews(json) {
+  const kind = {};
+  (json.images || []).forEach(im => { if (im.bufferView != null) kind[im.bufferView] = 'tex'; });
+  for (const m of json.meshes || []) for (const p of m.primitives || []) {
+    const acc = i => json.accessors?.[i]?.bufferView;
+    if (p.indices != null && acc(p.indices) != null) kind[acc(p.indices)] ??= 'idx';
+    for (const a of Object.values(p.attributes || {})) if (acc(a) != null) kind[acc(a)] ??= 'geo';
+    const dr = p.extensions?.KHR_draco_mesh_compression; if (dr) kind[dr.bufferView] = 'geo';
+  }
+  (json.accessors || []).forEach(a => { if (a.bufferView != null) kind[a.bufferView] ??= 'other'; });
+  return kind;
+}
+
+async function readInfo(name) {
+  const f = files.get(name), ab = await f.arrayBuffer();
+  if (/\.glb$/i.test(name)) {
+    const glb = parseGlb(ab);
+    if (!glb) throw new Error(`${name} is not a binary glTF (bad magic)`);
+    const kind = classifyViews(glb.json), parts = { hdr: 12 + 8 * glb.chunks.length, json: 0, geo: 0, idx: 0, tex: 0, other: 0 };
+    for (const c of glb.chunks) if (c.type === CHUNK_JSON) parts.json += c.len;
+    let used = 0;
+    (glb.json.bufferViews || []).forEach((bv, i) => { parts[kind[i] || 'other'] += bv.byteLength; used += bv.byteLength; });
+    const binLen = glb.chunks.filter(c => c.type === CHUNK_BIN).reduce((s, c) => s + c.len, 0);
+    parts.other += Math.max(0, binLen - used);   // alignment padding / orphaned bytes
+    return { kind: 'glb', json: glb.json, glb, parts, size: ab.byteLength };
+  }
+  const json = JSON.parse(new TextDecoder().decode(ab));
+  const ext = [], missing = [];
+  const sizeOf = uri => {
+    if (uri.startsWith('data:')) return Math.floor((uri.length - uri.indexOf(',') - 1) * 3 / 4);
+    const f = files.get(decodeURIComponent(uri.split('/').pop()));
+    if (!f) { missing.push(uri); return 0; } return f.size;
+  };
+  (json.buffers || []).forEach(b => b.uri && ext.push({ uri: b.uri, kind: 'buffer', size: sizeOf(b.uri) }));
+  (json.images || []).forEach(im => im.uri && ext.push({ uri: im.uri, kind: 'image', size: sizeOf(im.uri) }));
+  const kind = classifyViews(json), parts = { hdr: 0, json: ab.byteLength, geo: 0, idx: 0, tex: 0, other: 0 };
+  (json.bufferViews || []).forEach((bv, i) => parts[kind[i] || 'other'] += bv.byteLength);
+  ext.filter(e => e.kind === 'image').forEach(e => parts.tex += e.size);
+  return { kind: 'gltf', json, ext, missing, parts, size: ab.byteLength + ext.reduce((s, e) => s + e.size, 0) };
+}
+
+// ---- open + LOD wiring -----------------------------------------------------
+async function open(name) {
+  showErr('');
+  try {
+    const info = await readInfo(name);
+    const gltf = await loader.loadAsync(urls.get(name));
+    clearScene();
+    const root = gltf.scene; scene.add(root);
+    const { parser } = gltf, json = parser.json;
+    let levels = [], thresholds = null, lodNode = -1;
+    lodNode = (json.nodes || []).findIndex(n => n.extensions?.MSFT_lod);
+    if (lodNode >= 0) {
+      let top = null;
+      root.traverse(o => { if (parser.associations.get(o)?.nodes === lodNode) top = o; });
+      if (top) {
+        levels.push({ obj: top, node: lodNode });
+        // three.js ignores MSFT_lod, so the lower levels are never instantiated; build them here.
+        for (const id of json.nodes[lodNode].extensions.MSFT_lod.ids || []) {
+          const o = await parser.getDependency('node', id);
+          top.parent.add(o); levels.push({ obj: o, node: id });
+        }
+        levels.forEach(l => l.stats = meshStats(l.obj));
+      }
+      thresholds = json.nodes[lodNode].extras?.ESRI_lod?.thresholds || null;
+    }
+    const sphere = new THREE.Box3().setFromObject(levels[0]?.obj || root).getBoundingSphere(new THREE.Sphere());
+    current = { name, info, gltf, root, levels, thresholds, lodNode, sphere };
+    setupControls(); frame(); renderFileList(); renderInfo();
+    $('#drop').classList.add('hide');
+  } catch (e) { console.error(e); showErr(`${name}: ${e.message || e}`); }
+}
+
+function clearScene() {
+  if (!current) return;
+  scene.remove(current.root);
+  current.root.traverse(o => {
+    o.geometry?.dispose();
+    for (const m of [].concat(o.material || [])) { for (const v of Object.values(m)) v?.isTexture && v.dispose(); m.dispose(); }
+  });
+}
+
+function meshStats(obj) {
+  let tris = 0, verts = 0; const mats = new Set();
+  obj.traverse(o => {
+    if (!o.isMesh) return;
+    const g = o.geometry; verts += g.attributes.position.count;
+    tris += (g.index ? g.index.count : g.attributes.position.count) / 3;
+    [].concat(o.material).forEach(m => mats.add(m.name));
+  });
+  return { tris, verts, mats: [...mats] };
+}
+
+function setupControls() {
+  const { levels, thresholds, json = current.gltf.parser.json } = current;
+  const sel = $('#lodSel');
+  sel.innerHTML = (levels.length ? `<option value="auto">Auto (${thresholds ? 'ESRI_lod' : 'no ESRI_lod → top only'})</option>` : '<option value="auto">No MSFT_lod</option>')
+    + levels.map((l, i) => `<option value="${i}">Level ${i}: ${esc(json.nodes[l.node].name || 'node ' + l.node)}</option>`).join('');
+  sel.value = 'auto';
+  $('#ladder').innerHTML = levels.map((l, i) => `<span data-i="${i}">${i}${thresholds ? ' ≥' + thresholds[i] + 'px' : ''}</span>`).join('');
+  $('#ctrl').style.display = 'flex'; $('#hud').style.display = 'block';
+  applyWire();
+}
+$('#wire').onchange = applyWire;
+$('#grid').onchange = e => grid.visible = e.target.checked;
+$('#spin').onchange = e => controls.autoRotate = e.target.checked;
+$('#frame').onclick = () => frame();
+function applyWire() {
+  current?.levels.concat({ obj: current.root }).forEach(l => l.obj.traverse(o => {
+    if (o.isMesh) [].concat(o.material).forEach(m => m.wireframe = $('#wire').checked);
+  }));
+}
+
+function frame() {
+  if (!current) return;
+  const { center, radius } = current.sphere;
+  const d = radius / Math.sin(THREE.MathUtils.degToRad(camera.fov / 2)) * 1.1;
+  camera.position.copy(center).add(new THREE.Vector3(0.6, 0.35, 1).normalize().multiplyScalar(d));
+  camera.near = Math.max(radius / 1000, 0.001); camera.far = d * 100; camera.updateProjectionMatrix();
+  controls.target.copy(center); controls.update();
+  grid.position.y = new THREE.Box3().setFromObject(current.levels[0]?.obj || current.root).min.y;
+  grid.scale.setScalar(Math.max(radius / 5, 0.1));
+}
+
+// Same metric ArcGIS uses for ESRI_lod: bounding-sphere radius projected to pixels.
+function screenRadiusPx() {
+  const { center, radius } = current.sphere;
+  const d = Math.max(camera.position.distanceTo(center), 1e-6);
+  return radius / (d * Math.tan(THREE.MathUtils.degToRad(camera.fov / 2))) * (renderer.domElement.clientHeight / 2);
+}
+
+function updateLod() {
+  if (!current) return;
+  const { levels, thresholds } = current, px = screenRadiusPx(), mode = $('#lodSel').value;
+  let active = 0, why;
+  if (!levels.length) { why = 'single level'; }
+  else if (mode !== 'auto') { active = +mode; why = 'forced'; }
+  else if (thresholds) {
+    active = thresholds.findIndex(t => px >= t);
+    why = active < 0 ? `culled (< ${thresholds[thresholds.length - 1]}px)` : `radius ≥ ${thresholds[active]}px`;
+  } else { why = 'no ESRI_lod: ArcGIS shows the top level only'; }
+  levels.forEach((l, i) => l.obj.visible = i === active);
+  $('#ladder').querySelectorAll('span').forEach(s => s.classList.toggle('on', +s.dataset.i === active));
+  const lv = levels[active];
+  $('#hud').innerHTML = `<div class="big">${levels.length ? (active < 0 ? 'Culled' : 'Level ' + active) : 'Model'}</div>
+    <div class="muted">${esc(why)}</div>
+    <div>Screen radius: <b>${px.toFixed(1)} px</b></div>
+    ${lv ? `<div>${lv.stats.tris.toLocaleString()} tris · ${lv.stats.verts.toLocaleString()} verts</div>` : ''}`;
+}
+
+function showErr(m) { $('#err').style.display = m ? 'block' : 'none'; $('#err').textContent = m; }
+
+// ---- info panel --------------------------------------------------------------
+document.querySelectorAll('nav button').forEach(b => b.onclick = () => {
+  tab = b.dataset.tab;
+  document.querySelectorAll('nav button').forEach(x => x.classList.toggle('on', x === b));
+  renderInfo();
+});
+
+const PARTS = [['hdr', 'GLB header + chunk headers', '--c-hdr'], ['json', 'JSON', '--c-json'], ['geo', 'Vertex attributes', '--c-geo'],
+               ['idx', 'Indices', '--c-idx'], ['tex', 'Textures', '--c-tex'], ['other', 'Other / padding', '--c-other']];
+
+function renderInfo() {
+  if (!current) return;
+  const { info, gltf } = current, json = gltf.parser.json, el = $('#info');
+  const T = {
+    structure() {
+      const p = info.parts, total = Object.values(p).reduce((a, b) => a + b, 0) || 1;
+      let h = `<h3>${info.kind === 'glb' ? 'Binary glTF (.glb)' : 'JSON glTF (.gltf) + external files'}</h3>`;
+      h += `<div class="bar">${PARTS.filter(([k]) => p[k]).map(([k, , c]) => `<span style="width:${p[k] / total * 100}%;background:var(${c})"></span>`).join('')}</div>`;
+      h += `<div class="legend">${PARTS.filter(([k]) => p[k]).map(([k, l, c]) => `<i style="background:var(${c})"></i><span>${l}</span><span class="n">${kb(p[k])}</span>`).join('')}</div>`;
+      if (info.kind === 'glb') {
+        const g = info.glb;
+        h += `<h3>Layout</h3><table>
+          <tr><th>Offset</th><th>Block</th><th class="n">Bytes</th></tr>
+          <tr><td>0</td><td>Header: magic "glTF", version ${g.version}, length ${g.length.toLocaleString()}</td><td class="n">12</td></tr>
+          ${g.chunks.map(c => `<tr><td>${c.offset}</td><td>${c.type === CHUNK_JSON ? 'JSON chunk' : c.type === CHUNK_BIN ? 'BIN chunk' : 'Unknown chunk 0x' + c.type.toString(16)}</td><td class="n">${(8 + c.len).toLocaleString()}</td></tr>`).join('')}
+        </table>`;
+        if (g.length !== g.fileSize) h += `<p class="bad">Header length ${g.length} ≠ file size ${g.fileSize}</p>`;
+        h += `<p class="muted">A GLB is one file: a 12-byte header, then a JSON chunk (the scene description) and a BIN chunk. Meshes and embedded images point into the BIN chunk through bufferViews instead of separate files.</p>`;
+      } else {
+        h += `<h3>External files</h3><table><tr><th>URI</th><th>Kind</th><th class="n">Size</th></tr>
+          ${info.ext.map(e => `<tr><td>${esc(e.uri.startsWith('data:') ? 'data: URI' : e.uri)}</td><td>${e.kind}</td><td class="n ${info.missing.includes(e.uri) ? 'bad' : ''}">${info.missing.includes(e.uri) ? 'missing' : kb(e.size)}</td></tr>`).join('')}</table>`;
+        h += `<p class="muted">Packing to GLB moves every buffer and image into one BIN chunk, rewrites their URIs to bufferViews, and keeps the JSON (extensions, extras, MSFT_lod) as-is.</p>
+          <button class="primary" id="pack" ${info.missing.length ? 'disabled' : ''}>Pack to GLB and view</button>`;
+      }
+      h += `<h3>Buffer views</h3><table><tr><th>#</th><th>Holds</th><th class="n">Offset</th><th class="n">Bytes</th></tr>`;
+      const kind = classifyViews(json), lbl = { tex: 'texture', idx: 'indices', geo: 'vertices', other: 'other' };
+      (json.bufferViews || []).forEach((bv, i) => h += `<tr><td>${i}</td><td>${lbl[kind[i]] || 'unused'}${bv.byteStride ? ' · stride ' + bv.byteStride : ''}</td><td class="n">${(bv.byteOffset || 0).toLocaleString()}</td><td class="n">${bv.byteLength.toLocaleString()}</td></tr>`);
+      h += `</table><h3>Extensions</h3><p>${(json.extensionsUsed || []).map(e => `<span class="tag">${esc(e)}</span>`).join(' ') || '<span class="muted">none</span>'}</p>`;
+      if (json.asset?.extras) h += `<h3>asset.extras</h3><pre>${esc(JSON.stringify(json.asset.extras, null, 1))}</pre>`;
+      return h;
+    },
+    lod() {
+      const { levels, thresholds, lodNode } = current;
+      if (lodNode < 0) return '<p class="muted">No node carries MSFT_lod, so this file is a single level.</p>';
+      let h = `<h3>MSFT_lod chain on node ${lodNode} (${esc(json.nodes[lodNode].name)})</h3>
+        <table><tr><th>Lvl</th><th>Node</th><th class="n">ESRI ≥px</th><th class="n">Tris</th><th class="n">Verts</th></tr>
+        ${levels.map((l, i) => `<tr><td>${i}</td><td>${esc(json.nodes[l.node].name || l.node)}<br><span class="muted">${l.stats.mats.map(esc).join(', ')}</span></td>
+          <td class="n">${thresholds ? thresholds[i] ?? '<span class="bad">?</span>' : '—'}</td><td class="n">${l.stats.tris.toLocaleString()}</td><td class="n">${l.stats.verts.toLocaleString()}</td></tr>`).join('')}
+        </table>`;
+      if (!thresholds) h += `<p class="warn">No extras.ESRI_lod on the LOD node. ArcGIS will show only level 0. Run <code>add-esri-lod.py</code>.</p>`;
+      else if (thresholds.length !== levels.length) h += `<p class="bad">ESRI_lod has ${thresholds.length} thresholds for ${levels.length} levels.</p>`;
+      else if (thresholds.some((t, i) => i && t >= thresholds[i - 1])) h += `<p class="bad">Thresholds are not strictly descending.</p>`;
+      else h += `<p class="ok">ESRI_lod matches the chain (${thresholds.join(', ')}).</p>`;
+      h += `<p class="muted">Auto mode picks the first level whose threshold the projected bounding-sphere radius reaches; below the last threshold the tree is not drawn. Zoom to watch it switch.</p>`;
+      return h;
+    },
+    materials() {
+      return `<table><tr><th>#</th><th>Name</th><th>Alpha</th><th>Tex</th></tr>${(json.materials || []).map((m, i) => {
+        const am = m.alphaMode || 'OPAQUE', pb = m.pbrMetallicRoughness || {};
+        const tex = [['B', pb.baseColorTexture], ['MR', pb.metallicRoughnessTexture], ['N', m.normalTexture], ['O', m.occlusionTexture], ['E', m.emissiveTexture]]
+          .filter(([, t]) => t).map(([k, t]) => k + (t.texCoord ? '/uv' + t.texCoord : '')).join(' ');
+        return `<tr><td>${i}</td><td>${esc(m.name)}${m.doubleSided ? ' <span class="tag">2-sided</span>' : ''}</td>
+          <td class="${am === 'BLEND' ? 'warn' : ''}">${am}${am === 'MASK' ? ' @' + (m.alphaCutoff ?? 0.5) : ''}</td><td>${tex}</td></tr>`;
+      }).join('')}</table>`;
+    },
+    meshes() {
+      return (json.meshes || []).map((m, mi) => `<h3>Mesh ${mi} ${esc(m.name || '')}</h3><table>
+        <tr><th>Material</th><th class="n">Verts</th><th>Attributes</th></tr>
+        ${m.primitives.map(p => `<tr><td>${esc(json.materials?.[p.material]?.name ?? '—')}</td>
+          <td class="n">${(json.accessors[p.attributes.POSITION]?.count ?? 0).toLocaleString()}</td>
+          <td>${Object.keys(p.attributes).sort().join(', ')}${p.extensions ? ' <span class="tag">' + Object.keys(p.extensions).join(', ') + '</span>' : ''}</td></tr>`).join('')}
+        </table>`).join('');
+    },
+    json() {
+      const s = JSON.stringify(json, null, 1);
+      return `<pre>${esc(s.length > 200000 ? s.slice(0, 200000) + '\n… (truncated)' : s)}</pre>`;
+    },
+  };
+  el.innerHTML = T[tab]();
+  const pk = $('#pack'); if (pk) pk.onclick = packCurrent;
+}
+
+// ---- .gltf -> .glb packer -------------------------------------------------------
+const MIME = { png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', ktx2: 'image/ktx2', webp: 'image/webp' };
+async function fetchUri(uri) {
+  if (uri.startsWith('data:')) return new Uint8Array(await (await fetch(uri)).arrayBuffer());
+  const f = files.get(decodeURIComponent(uri.split('/').pop()));
+  if (!f) throw new Error('missing ' + uri);
+  return new Uint8Array(await f.arrayBuffer());
+}
+async function packToGlb(src) {
+  const json = structuredClone(src), parts = []; let len = 0;
+  const push = u8 => {
+    const pad = (4 - len % 4) % 4; if (pad) { parts.push(new Uint8Array(pad)); len += pad; }
+    const off = len; parts.push(u8); len += u8.byteLength; return off;
+  };
+  const bufOff = [];
+  for (const b of json.buffers || []) bufOff.push(push(b.uri ? (await fetchUri(b.uri)).subarray(0, b.byteLength) : new Uint8Array(0)));
+  for (const bv of json.bufferViews || []) { bv.byteOffset = (bv.byteOffset || 0) + bufOff[bv.buffer]; bv.buffer = 0; }
+  for (const im of json.images || []) {
+    if (!im.uri) continue;
+    const u8 = await fetchUri(im.uri);
+    (json.bufferViews ||= []).push({ buffer: 0, byteOffset: push(u8), byteLength: u8.byteLength });
+    im.bufferView = json.bufferViews.length - 1;
+    im.mimeType ||= im.uri.startsWith('data:') ? im.uri.slice(5, im.uri.indexOf(';')) : MIME[im.uri.split('.').pop().toLowerCase()];
+    delete im.uri;
+  }
+  const tail = (4 - len % 4) % 4; if (tail) { parts.push(new Uint8Array(tail)); len += tail; }
+  if (len) json.buffers = [{ byteLength: len }]; else delete json.buffers;
+  const jt = new TextEncoder().encode(JSON.stringify(json));
+  const jb = new Uint8Array(jt.length + (4 - jt.length % 4) % 4).fill(0x20); jb.set(jt);
+  const total = 12 + 8 + jb.length + (len ? 8 + len : 0), out = new Uint8Array(total), dv = new DataView(out.buffer);
+  dv.setUint32(0, GLB_MAGIC, true); dv.setUint32(4, 2, true); dv.setUint32(8, total, true);
+  dv.setUint32(12, jb.length, true); dv.setUint32(16, CHUNK_JSON, true); out.set(jb, 20);
+  if (len) {
+    let o = 20 + jb.length; dv.setUint32(o, len, true); dv.setUint32(o + 4, CHUNK_BIN, true); o += 8;
+    for (const p of parts) { out.set(p, o); o += p.byteLength; }
+  }
+  return out;
+}
+async function packCurrent() {
+  try {
+    const bytes = await packToGlb(current.info.json);
+    const name = current.name.replace(/\.gltf$/i, '') + '.glb';
+    const file = new File([bytes], name, { type: 'model/gltf-binary' });
+    const a = Object.assign(document.createElement('a'), { href: URL.createObjectURL(file), download: name });
+    a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+    addFiles([file]); tab = 'structure'; await open(name);
+  } catch (e) { showErr('Pack failed: ' + e.message); }
+}
+
+// ---- loop ------------------------------------------------------------------
+renderer.setAnimationLoop(() => { controls.update(); updateLod(); renderer.render(scene, camera); });
+</script>
+</body>
+</html>
